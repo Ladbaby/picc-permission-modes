@@ -255,7 +255,7 @@ export function generateWordSlug(): string {
 let plansDirCache: string | undefined;
 export function getPlansDir(): string {
   if (plansDirCache) return plansDirCache;
-  const dir = path.join(getAgentDir(), "plans");
+  const dir = path.join(getAgentDir(), "extensions", "picc-permission-modes", "plans");
   if (!existsSync(dir)) {
     try {
       mkdirSync(dir, { recursive: true });
