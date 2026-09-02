@@ -40,8 +40,8 @@ Each rule is a string like `Read`, `Bash(go)`, `Bash(git commit *)`, or `Read(//
 
 Override the loader paths at runtime via env vars:
 
-- `PI_PERMISSIONS_CONFIG_PATH=/abs/path/config.json`
-- `CLAUDE_SETTINGS_PATH=/abs/path/settings.json`
+- `PICC_PERMISSION_MODES_CONFIG_PATH=/abs/path/config.json`
+- `CLAUDE_CONFIG_DIR=/abs/path` (the loader reads `<CLAUDE_CONFIG_DIR>/settings.json`)
 
 Seeded rules are written to the `userSettings` source of the rule store, so they rank lower than session-dialog acceptances (matching upstream's `userSettings` -> `projectSettings` -> `session` precedence) and survive `/resume` and `/fork`.
 
