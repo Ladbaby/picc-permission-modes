@@ -263,9 +263,6 @@ function cycleFromMode(
   );
 }
 function resolveAutoModeConfigPath(): string {
-  if (process.env.PI_AUTO_MODE_CONFIG_PATH) {
-    return process.env.PI_AUTO_MODE_CONFIG_PATH;
-  }
   const here = dirname(fileURLToPath(import.meta.url));
   return join(here, "config.json");
 }

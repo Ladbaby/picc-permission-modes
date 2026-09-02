@@ -5,9 +5,6 @@ import {
   isNormalizedGitCommand,
 } from "./upstream/tools/BashTool/bashPermissions.ts";
 import { splitCommand_DEPRECATED } from "./upstream/utils/bash/commands.ts";
-if (!process.env.PI_KEEP_XARGS_ON_WINDOWS) {
-  process.env.PI_KEEP_XARGS_ON_WINDOWS = "1";
-}
 export type {
   FlagArgType,
   ExternalCommandConfig,

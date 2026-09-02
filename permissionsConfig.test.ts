@@ -15,14 +15,14 @@ let claudeSettingsPath: string;
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "pi-perm-cfg-"));
   localConfigPath = join(tempDir, "config.json");
-  claudeSettingsPath = join(tempDir, "claude-settings.json");
-  process.env.PI_PERMISSIONS_CONFIG_PATH = localConfigPath;
-  process.env.CLAUDE_SETTINGS_PATH = claudeSettingsPath;
+  claudeSettingsPath = join(tempDir, "settings.json");
+  process.env.PICC_PERMISSION_MODES_CONFIG_PATH = localConfigPath;
+  process.env.CLAUDE_CONFIG_DIR = tempDir;
 });
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
-  delete process.env.PI_PERMISSIONS_CONFIG_PATH;
-  delete process.env.CLAUDE_SETTINGS_PATH;
+  delete process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
+  delete process.env.CLAUDE_CONFIG_DIR;
 });
 describe("loadUserPermissions", () => {
   describe("empty / missing files", () => {

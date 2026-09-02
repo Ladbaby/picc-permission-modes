@@ -41,7 +41,7 @@ export const DANGEROUS_DIRECTORIES = [
 export function hasSuspiciousWindowsPathPattern(pathStr: string): boolean {
   if (!pathStr) return false;
   const isWin = process.platform === "win32";
-  const isWsl = !!process.env.WSL_DISTRO_NAME || !!process.env.WSLENV;
+  const isWsl = !!process.env.WSL_DISTRO_NAME;
   if (isWin || isWsl) {
     const colonIndex = pathStr.indexOf(":", 2);
     if (colonIndex !== -1) return true;

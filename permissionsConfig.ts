@@ -15,17 +15,15 @@ const EMPTY: UserPermissions = {
   source: "none",
 };
 function resolveLocalConfigPath(): string {
-  if (process.env.PI_PERMISSIONS_CONFIG_PATH) {
-    return process.env.PI_PERMISSIONS_CONFIG_PATH;
+  if (process.env.PICC_PERMISSION_MODES_CONFIG_PATH) {
+    return process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
   }
   const here = dirname(fileURLToPath(import.meta.url));
   return join(here, "config.json");
 }
 function resolveClaudeSettingsPath(): string {
-  if (process.env.CLAUDE_SETTINGS_PATH) {
-    return process.env.CLAUDE_SETTINGS_PATH;
-  }
-  return join(homedir(), ".claude", "settings.json");
+  const claudeConfigDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+  return join(claudeConfigDir, "settings.json");
 }
 /** Strip `//` and `/* * /` JSON comments (matches the upstream loader's
  *  behavior so the autoMode block can live next to flat-permission rules

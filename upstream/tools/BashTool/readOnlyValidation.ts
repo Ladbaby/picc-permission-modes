@@ -27,12 +27,6 @@ const getOriginalCwd = (): string => process.cwd()
 const getCwd = (): string => process.cwd()
 const isCurrentDirectoryBareGitRepo = (): boolean => false
 const isSandboxingEnabled = (): boolean => false
-const getPlatform = (): 'macos' | 'windows' | 'wsl' | 'linux' | 'unknown' => {
-  if (process.platform === 'darwin') return 'macos'
-  if (process.platform === 'win32') return 'windows'
-  if (process.platform === 'linux') return 'linux'
-  return 'unknown'
-}
 type CommandConfig = {
   safeFlags: Record<string, FlagArgType>
   regex?: RegExp
@@ -971,10 +965,6 @@ const ANT_ONLY_COMMAND_ALLOWLIST: Record<string, CommandConfig> = {
 }
 function getCommandAllowlist(): Record<string, CommandConfig> {
   let allowlist: Record<string, CommandConfig> = COMMAND_ALLOWLIST
-  if (getPlatform() === 'windows' && !process.env.PI_KEEP_XARGS_ON_WINDOWS) {
-    const { xargs: _, ...rest } = allowlist
-    allowlist = rest
-  }
   if (process.env.USER_TYPE === 'ant') {
     return { ...allowlist, ...ANT_ONLY_COMMAND_ALLOWLIST }
   }

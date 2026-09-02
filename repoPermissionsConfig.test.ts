@@ -24,15 +24,9 @@ beforeEach(() => {
   repoPath = join(tempDir, ".pi", "permissions.json");
   claudeLocalPath = join(tempDir, ".claude", "settings.local.json");
   claudeProjectPath = join(tempDir, ".claude", "settings.json");
-  process.env.PI_REPO_PERMISSIONS_PATH = repoPath;
-  process.env.CLAUDE_LOCAL_SETTINGS_PATH = claudeLocalPath;
-  process.env.CLAUDE_PROJECT_SETTINGS_PATH = claudeProjectPath;
 });
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
-  delete process.env.PI_REPO_PERMISSIONS_PATH;
-  delete process.env.CLAUDE_LOCAL_SETTINGS_PATH;
-  delete process.env.CLAUDE_PROJECT_SETTINGS_PATH;
 });
 function writeJson(path: string, obj: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -139,7 +133,14 @@ describe("loadRepoPermissions", () => {
       mkdirSync(dirname(repoPath), { recursive: true });
       writeFileSync(
         repoPath,
-        '{\n
+        `{
+          // leading comment
+          "permissions": {
+            "allow": ["Read"],
+            "deny": [],
+            "ask": []
+          }
+        }`,
         "utf-8",
       );
       const result = loadRepoPermissions(cwd);

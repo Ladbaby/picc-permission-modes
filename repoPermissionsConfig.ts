@@ -24,21 +24,12 @@ const EMPTY: RepoPermissions = {
   source: "none",
 };
 export function resolveRepoPermissionsPath(cwd: string): string {
-  if (process.env.PI_REPO_PERMISSIONS_PATH) {
-    return process.env.PI_REPO_PERMISSIONS_PATH;
-  }
   return join(cwd, ".pi", "permissions.json");
 }
 export function resolveClaudeLocalSettingsPath(cwd: string): string {
-  if (process.env.CLAUDE_LOCAL_SETTINGS_PATH) {
-    return process.env.CLAUDE_LOCAL_SETTINGS_PATH;
-  }
   return join(cwd, ".claude", "settings.local.json");
 }
 export function resolveClaudeProjectSettingsPath(cwd: string): string {
-  if (process.env.CLAUDE_PROJECT_SETTINGS_PATH) {
-    return process.env.CLAUDE_PROJECT_SETTINGS_PATH;
-  }
   return join(cwd, ".claude", "settings.json");
 }
 function mergeUnique(

@@ -312,35 +312,29 @@ function createFakePi(): FakePi {
 function makeFakePiForExtension(p: FakePi) {
   return p as unknown as Parameters<typeof permissionModesExtension>[0];
 }
+let globalEnvDir: string | undefined;
+const savedGlobalEnv: { config?: string | undefined; claude?: string | undefined } = {};
 beforeAll(() => {
   const { join } = require("node:path") as typeof import("node:path");
   const { mkdtempSync } = require("node:fs") as typeof import("node:fs");
   const { tmpdir } = require("node:os") as typeof import("node:os");
-  const dir = mkdtempSync(join(tmpdir(), "pi-perm-test-"));
-  process.env.PI_PERMISSIONS_CONFIG_PATH = join(dir, "config.json");
-  process.env.CLAUDE_SETTINGS_PATH = join(dir, "claude-settings.json");
-  process.env.PI_REPO_PERMISSIONS_PATH = join(dir, "repo-permissions.json");
-  process.env.CLAUDE_LOCAL_SETTINGS_PATH = join(dir, "claude-local.json");
-  process.env.CLAUDE_PROJECT_SETTINGS_PATH = join(dir, "claude-project.json");
-});
-const TEST_ENV_KEYS = ["PI_AUTO_MODE_CONFIG_PATH"];
-const savedTestEnv: Record<string, string | undefined> = {};
-beforeAll(() => {
-  for (const k of TEST_ENV_KEYS) {
-    if (!(k in savedTestEnv)) savedTestEnv[k] = process.env[k];
-    delete process.env[k];
-  }
+  globalEnvDir = mkdtempSync(join(tmpdir(), "pi-perm-test-"));
+  savedGlobalEnv.config = process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
+  savedGlobalEnv.claude = process.env.CLAUDE_CONFIG_DIR;
+  process.env.PICC_PERMISSION_MODES_CONFIG_PATH = join(globalEnvDir, "config.json");
+  process.env.CLAUDE_CONFIG_DIR = globalEnvDir;
 });
 beforeEach(() => {
-  for (const k of TEST_ENV_KEYS) {
-    delete process.env[k];
-  }
   setInteractiveModeForTests(undefined);
 });
 afterAll(() => {
-  for (const k of TEST_ENV_KEYS) {
-    if (savedTestEnv[k] === undefined) delete process.env[k];
-    else process.env[k] = savedTestEnv[k];
+  if (savedGlobalEnv.config === undefined) delete process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
+  else process.env.PICC_PERMISSION_MODES_CONFIG_PATH = savedGlobalEnv.config;
+  if (savedGlobalEnv.claude === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+  else process.env.CLAUDE_CONFIG_DIR = savedGlobalEnv.claude;
+  if (globalEnvDir) {
+    const { rmSync } = require("node:fs") as typeof import("node:fs");
+    rmSync(globalEnvDir, { recursive: true, force: true });
   }
 });
 describe("permission-modes extension: tool_call gate", () => {
@@ -550,17 +544,16 @@ describe("permission-modes extension: tool_call gate", () => {
       expect(result).toBeUndefined();
     });
     it("bash scoped-allow ('Yes, and don't ask again for: X *') persists a session allow rule", async () => {
-      const savedRepoPath = process.env.PI_REPO_PERMISSIONS_PATH;
       const dir = mkdtempSync(join(tmpdir(), "pi-perm-repo-default-"));
       const repoPath = join(dir, ".pi", "permissions.json");
-      process.env.PI_REPO_PERMISSIONS_PATH = repoPath;
       try {
-        await switchMode("default");
+        pi.flags["permission-mode"] = "default";
+        await pi.simulateSessionStart(dir);
         const result = await pi.simulateToolCall(
           "bash",
           { command: "git push origin main" },
           pi.fakeCtxFor({
-            cwd,
+            cwd: dir,
             ui: { ...pi.ui, custom: async <T,>() => ("Yes, and don't ask again for: git *") as T } as any,
           }),
         );
@@ -568,11 +561,14 @@ describe("permission-modes extension: tool_call gate", () => {
         expect(existsSync(repoPath)).toBe(true);
         expect(JSON.parse(readFileSync(repoPath, "utf-8")).permissions.allow)
           .toContain("Bash(git *)");
-        const followup = await pi.simulateToolCall("bash", { command: "git push origin dev" });
+        const followup = await pi.simulateToolCall(
+          "bash",
+          { command: "git push origin dev" },
+          pi.fakeCtxFor({ cwd: dir }),
+        );
         expect(followup).toBeUndefined();
       } finally {
-        if (savedRepoPath === undefined) delete process.env.PI_REPO_PERMISSIONS_PATH;
-        else process.env.PI_REPO_PERMISSIONS_PATH = savedRepoPath;
+        rmSync(dir, { recursive: true, force: true });
       }
     });
   });
@@ -822,23 +818,26 @@ describe("user-configured permissions", () => {
   let cwd: string;
   let savedPermPath: string | undefined;
   let savedClaudePath: string | undefined;
+  let tempDirs: string[] = [];
   beforeEach(async () => {
-    savedPermPath = process.env.PI_PERMISSIONS_CONFIG_PATH;
-    savedClaudePath = process.env.CLAUDE_SETTINGS_PATH;
+    savedPermPath = process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
+    savedClaudePath = process.env.CLAUDE_CONFIG_DIR;
+    tempDirs = [];
     pi = createFakePi();
     cwd = process.cwd();
   });
   afterEach(() => {
     if (savedPermPath === undefined) {
-      delete process.env.PI_PERMISSIONS_CONFIG_PATH;
+      delete process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
     } else {
-      process.env.PI_PERMISSIONS_CONFIG_PATH = savedPermPath;
+      process.env.PICC_PERMISSION_MODES_CONFIG_PATH = savedPermPath;
     }
     if (savedClaudePath === undefined) {
-      delete process.env.CLAUDE_SETTINGS_PATH;
+      delete process.env.CLAUDE_CONFIG_DIR;
     } else {
-      process.env.CLAUDE_SETTINGS_PATH = savedClaudePath;
+      process.env.CLAUDE_CONFIG_DIR = savedClaudePath;
     }
+    for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
   });
   function writeLocalConfig(perms: {
     allow?: string[];
@@ -846,14 +845,15 @@ describe("user-configured permissions", () => {
     ask?: string[];
   }): string {
     const dir = mkdtempSync(join(tmpdir(), "pi-perm-user-"));
+    tempDirs.push(dir);
     const path = join(dir, "config.json");
     writeFileSync(
       path,
       JSON.stringify({ permissions: { allow: [], deny: [], ask: [], ...perms } }),
       "utf-8",
     );
-    process.env.PI_PERMISSIONS_CONFIG_PATH = path;
-    process.env.CLAUDE_SETTINGS_PATH = join(dir, "claude-settings.json");
+    process.env.PICC_PERMISSION_MODES_CONFIG_PATH = path;
+    process.env.CLAUDE_CONFIG_DIR = dir;
     return path;
   }
   /** Write a local config that has NO `permissions` block at all (the
@@ -863,14 +863,15 @@ describe("user-configured permissions", () => {
     claudePerms: { allow?: string[]; deny?: string[]; ask?: string[] },
   ): void {
     const dir = mkdtempSync(join(tmpdir(), "pi-perm-user-"));
+    tempDirs.push(dir);
     const path = join(dir, "config.json");
     writeFileSync(
       path,
       JSON.stringify({ autoMode: { allow: ["x"] } }),
       "utf-8",
     );
-    process.env.PI_PERMISSIONS_CONFIG_PATH = path;
-    const claudePath = join(dir, "claude-settings.json");
+    process.env.PICC_PERMISSION_MODES_CONFIG_PATH = path;
+    const claudePath = join(dir, "settings.json");
     writeFileSync(
       claudePath,
       JSON.stringify({
@@ -882,7 +883,7 @@ describe("user-configured permissions", () => {
       }),
       "utf-8",
     );
-    process.env.CLAUDE_SETTINGS_PATH = claudePath;
+    process.env.CLAUDE_CONFIG_DIR = dir;
   }
   it("auto-allows Read when user has a bare 'Read' rule in default mode", async () => {
     writeLocalConfig({ allow: ["Read"] });
@@ -941,28 +942,14 @@ describe("user-configured permissions", () => {
 describe("repo-scoped permissions", () => {
   let pi: FakePi;
   let cwd: string;
-  let savedRepoPath: string | undefined;
-  let savedClaudeLocalPath: string | undefined;
-  let savedClaudeProjectPath: string | undefined;
   let repoDir: string;
   beforeEach(async () => {
-    savedRepoPath = process.env.PI_REPO_PERMISSIONS_PATH;
-    savedClaudeLocalPath = process.env.CLAUDE_LOCAL_SETTINGS_PATH;
-    savedClaudeProjectPath = process.env.CLAUDE_PROJECT_SETTINGS_PATH;
     pi = createFakePi();
-    cwd = process.cwd();
     repoDir = mkdtempSync(join(tmpdir(), "pi-perm-repo-"));
-    process.env.PI_REPO_PERMISSIONS_PATH = join(repoDir, ".pi", "permissions.json");
-    process.env.CLAUDE_LOCAL_SETTINGS_PATH = join(repoDir, ".claude", "settings.local.json");
-    process.env.CLAUDE_PROJECT_SETTINGS_PATH = join(repoDir, ".claude", "settings.json");
+    cwd = repoDir;
   });
   afterEach(() => {
-    if (savedRepoPath === undefined) delete process.env.PI_REPO_PERMISSIONS_PATH;
-    else process.env.PI_REPO_PERMISSIONS_PATH = savedRepoPath;
-    if (savedClaudeLocalPath === undefined) delete process.env.CLAUDE_LOCAL_SETTINGS_PATH;
-    else process.env.CLAUDE_LOCAL_SETTINGS_PATH = savedClaudeLocalPath;
-    if (savedClaudeProjectPath === undefined) delete process.env.CLAUDE_PROJECT_SETTINGS_PATH;
-    else process.env.CLAUDE_PROJECT_SETTINGS_PATH = savedClaudeProjectPath;
+    rmSync(repoDir, { recursive: true, force: true });
   });
   function writeRepoPerms(perms: {
     allow?: string[];
@@ -2862,18 +2849,21 @@ describe("auto mode: user rules precede the classifier", () => {
   let cwd: string;
   let savedPermPath: string | undefined;
   let savedClaudePath: string | undefined;
+  let tempDirs: string[] = [];
   beforeEach(() => {
-    savedPermPath = process.env.PI_PERMISSIONS_CONFIG_PATH;
-    savedClaudePath = process.env.CLAUDE_SETTINGS_PATH;
+    savedPermPath = process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
+    savedClaudePath = process.env.CLAUDE_CONFIG_DIR;
+    tempDirs = [];
     pi = createFakePi();
     cwd = process.cwd();
   });
   afterEach(() => {
     resetAutoMode();
-    if (savedPermPath === undefined) delete process.env.PI_PERMISSIONS_CONFIG_PATH;
-    else process.env.PI_PERMISSIONS_CONFIG_PATH = savedPermPath;
-    if (savedClaudePath === undefined) delete process.env.CLAUDE_SETTINGS_PATH;
-    else process.env.CLAUDE_SETTINGS_PATH = savedClaudePath;
+    if (savedPermPath === undefined) delete process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
+    else process.env.PICC_PERMISSION_MODES_CONFIG_PATH = savedPermPath;
+    if (savedClaudePath === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = savedClaudePath;
+    for (const d of tempDirs) rmSync(d, { recursive: true, force: true });
   });
   function writeLocalConfig(perms: {
     allow?: string[];
@@ -2881,14 +2871,15 @@ describe("auto mode: user rules precede the classifier", () => {
     ask?: string[];
   }): void {
     const dir = mkdtempSync(join(tmpdir(), "pi-perm-auto-"));
+    tempDirs.push(dir);
     const cfg = join(dir, "config.json");
     writeFileSync(
       cfg,
       JSON.stringify({ permissions: { allow: [], deny: [], ask: [], ...perms } }),
       "utf-8",
     );
-    process.env.PI_PERMISSIONS_CONFIG_PATH = cfg;
-    process.env.CLAUDE_SETTINGS_PATH = join(dir, "claude-settings.json");
+    process.env.PICC_PERMISSION_MODES_CONFIG_PATH = cfg;
+    process.env.CLAUDE_CONFIG_DIR = dir;
   }
   /** Install the extension with the given rules loaded and a recording
    *  classifier stub. `calls` counts how many times `classify` was invoked so
