@@ -1,6 +1,6 @@
 {
   "name": "@ladbabynpm/picc-permission-modes",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Claude Code style permission modes (default, acceptEdits, plan, bypassPermissions, auto) and user-defined permission rules for the pi coding agent. A more faithful port of Claude Code's harness than pi-permission-modes.",
   "keywords": [
