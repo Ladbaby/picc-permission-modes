@@ -18,15 +18,99 @@ Fork of [pi-permission-modes](https://pi.dev/packages/pi-permission-modes), wher
 | `bypassPermissions` | ⏵⏵ | Auto-allow everything **except** dangerous-path safety checks (`.gitconfig`, `.bashrc`, `.git/`, `.claude/`, etc.). |
 | `auto` | ⏵⏵ | Reads/search/plan/task tools are safe-allowlisted (no classifier call). Edits/writes **inside cwd** are fast-pathed like `acceptEdits` (dangerous paths excluded). Everything else goes through a separate LLM classifier that allows safe actions and blocks destructive/exfiltrating ones. If the classifier is **unavailable** (no provider, HTTP error, timeout), the call falls back to a normal user prompt instead of hard-blocking. The TUI surfaces each classifier decision inline (see below). |
 
+## Install
+
+Install via `pi install npm:@ladbabynpm/picc-permission-modes`.
+
+
+## Configuration
+
+All configuration lives in a single JSON file (the extension's `config.json`), with a few environment variables to override its location or supply the classifier's auth.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PICC_PERMISSION_MODES_CONFIG_PATH` | `<extension dir>/config.json` | Absolute path to the extension's `config.json`. Override to point at a config in a different location. |
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | Directory the loader reads `settings.json` from when falling back to Claude Code's permissions block. |
+| `ANTHROPIC_AUTH_TOKEN` | *(unset)* | API key for the `auto` mode LLM classifier. Used when `autoMode.provider.apiKey` is unset, and interpolated into `"${ANTHROPIC_AUTH_TOKEN}"` placeholders in `config.json`. |
+
+### Example `config.json`
+
+```json
+{
+  "autoMode": {
+    "provider": {
+      "apiKey": "${ANTHROPIC_AUTH_TOKEN}",
+      "maxContextChars": 80000
+    },
+    "allow": [
+      "Standard read-only file inspection inside the working directory.",
+      "Standard search/grep/glob operations in the working directory.",
+      "Running tests, linters, and formatters.",
+      "Editing files inside the current working directory.",
+      "git add/commit/diff/log/status/fetch within the repository."
+    ],
+    "softDeny": [
+      "Force pushes (git push -f, git push --force, git push --force-with-lease).",
+      "rm -rf outside the working directory.",
+      "Editing files outside the working directory without explicit authorization.",
+      "Network egress to non-trusted external endpoints.",
+      "git push to a branch that is not the session's working branch."
+    ],
+    "hardDeny": [
+      "rm -rf /, rm -rf $HOME, or equivalent filesystem-wide destructive deletes.",
+      "Force push to main / master / the repository default branch.",
+      "DROP DATABASE / DROP SCHEMA without explicit user confirmation.",
+      "Disabling safety tooling, audit logs, or git hooks.",
+      "Systematic scanning of credential stores (.env, ~/.aws/, keychains, etc.).",
+      "Disabling or removing .claude/ settings, hooks, or rules."
+    ],
+    "environment": [
+      "An autonomous coding agent running inside the user's pi session."
+    ],
+    "classifyAllShell": false,
+    "denialLimits": {
+      "maxConsecutive": 3,
+      "maxTotal": 20
+    },
+    "transcriptMaxChars": 80000
+  },
+  "permissions": {
+    "allow": ["Read", "Bash(go)", "Bash(git commit *)"],
+    "deny": ["Bash(rm *)", "Bash(git push *)", "Bash(sudo *)"],
+    "ask": []
+  }
+}
+```
+
+User permissions are explained in the next section.
+
 ## User permissions
 
-Add a `permissions` block to `extensions/picc-permission-modes/config.json` to seed session-allow, session-deny, and session-ask rules. The format is identical to Claude Code's `permissions` block in `~/.claude/settings.json` (see [code.claude.com/docs/en/permissions](https://code.claude.com/docs/en/permissions)). Example:
+Add a `permissions` block to `~/.pi/agent/extensions/picc-permission-modes/config.json` to seed session-allow, session-deny, and session-ask rules. The format is identical to Claude Code's `permissions` block in `~/.claude/settings.json` (see [code.claude.com/docs/en/permissions](https://code.claude.com/docs/en/permissions)). Example:
 
 ```json
 {
   "permissions": {
-    "allow": ["Read", "Bash(go)"],
-    "deny": ["Bash(rm *)"],
+    "allow": [
+      "WebFetch",
+      "Read(//**)",
+      "Bash(go)",
+      "Bash(git commit *)",
+      "Bash(git * main)"
+    ],
+    "deny": [
+      "Bash(rm *)",
+      "Bash(rmdir *)",
+      "Bash(git push *)",
+      "Bash(sudo *)",
+      "Bash(shred *)",
+      "Bash(Restart-Computer *)",
+      "Bash(Format-Volume *)",
+      "Bash(Clear-Disk *)",
+      "Bash(Remove-Item *)"
+    ],
     "ask": []
   }
 }
@@ -37,67 +121,6 @@ Each rule is a string like `Read`, `Bash(go)`, `Bash(git commit *)`, or `Read(//
 **Precedence:** if the local `permissions` block in `config.json` has any entries in `allow`/`deny`/`ask`, those are used as-is. If the local block is empty (or the file is missing), the loader falls back to parsing `~/.claude/settings.json`'s `permissions` block so the same allow/deny rules you have in Claude Code apply to pi too.
 
 **Auto-persistence:** when the loader falls back to `~/.claude/settings.json`, it also writes the parsed rules back to `config.json` so the rules show up on disk where you can inspect or edit them. The write is idempotent — re-running when the local rules already match the claude settings is a no-op. Other top-level keys in `config.json` (e.g. `autoMode`) are preserved.
-
-Override the loader paths at runtime via env vars:
-
-- `PICC_PERMISSION_MODES_CONFIG_PATH=/abs/path/config.json`
-- `CLAUDE_CONFIG_DIR=/abs/path` (the loader reads `<CLAUDE_CONFIG_DIR>/settings.json`)
-
-Seeded rules are written to the `userSettings` source of the rule store, so they rank lower than session-dialog acceptances (matching upstream's `userSettings` -> `projectSettings` -> `session` precedence) and survive `/resume` and `/fork`.
-
-## Auto-mode classifier decision display
-
-In `auto` mode the classifier runs on tool calls that aren't safe-allowlisted or cwd-fast-pathed. To make its decisions visible to the user (mirroring claude-code's `UserToolSuccessMessage` / `UserToolErrorMessage`), the extension emits a dim line under each tool result:
-
-- **Allow** — `Allowed by auto mode classifier`
-- **Deny** — `Denied by auto mode classifier · /feedback if incorrect` (only shown when the classifier itself returned the block; the fallback-to-prompt path lets the user dialog convey the outcome instead)
-
-The hint row is persisted in the session JSONL and re-rendered on `/resume` and `/fork` like any other message.
-
-### How `auto` mode decides (Claude Code parity)
-
-For each `tool_call` in `auto` mode:
-
-1. **Safe-allowlist** — read/search/plan/task/coordination tools (`Read`, `Grep`, `Glob`, `LSP`, `ToolSearch`, `Task*`, `Enter/ExitPlanMode`, …) are allowed with no classifier call.
-2. **cwd fast-path** — `edit`/`write` whose target is inside the working directory (and not a dangerous path) is allowed with no classifier call, mirroring Claude Code's `acceptEdits` re-check. This means in-cwd editing is fast and costs no API round-trip.
-3. **Classifier** — everything else is sent to the classifier. The transcript sent to it excludes **assistant-authored prose** (only `tool_use` blocks from the assistant + user text) to avoid the model influencing its own gate, and `AGENTS.md`/`CLAUDE.md` contents are prepended as `<user_instructions>` so standing user authorization is honored. When the transcript exceeds the budget, the **oldest** turns are dropped first.
-4. **Unavailable ≠ blocked** — if the classifier can't be reached (provider unconfigured, HTTP error, timeout), the call falls back to the normal user prompt (Claude Code's open "iron gate"). A response that is merely *unparseable* still blocks, fail-closed.
-5. **Denial tracking** — repeated blocks trip a fallback to a manual prompt; the total counter resets when the total limit trips.
-
-Concrete user-defined allow/deny/ask rules are enforced by the sibling **picc-permission-system** extension, not here — pi runs all `tool_call` hooks with first-block-wins, so its deny rules take precedence. This extension only owns mode gating and the classifier.
-
-## Cycle order
-
-`Shift+Tab` cycles through every mode in order:
-
-- With `bypassPermissions` available: `default → acceptEdits → plan → bypassPermissions → auto → default`
-- Without `bypassPermissions`: `default → acceptEdits → plan → auto → default`
-
-`auto` is always reachable from the cycle. Plan and bypass are also reachable via the `EnterPlanMode` / `ExitPlanMode` tools and the `/plan` / `/bypassPermissions` slash commands.
-
-## Plan-mode flow
-
-1. LLM invokes the `EnterPlanMode` tool → user approves → mode switches to `plan`.
-2. LLM explores (read-only tools + read-only bash). In plan mode, **writes are not hard-blocked** — only the plan file is auto-allowed; any other `edit`/`write` is surfaced as a normal permission prompt (mirroring Claude Code). Bash and reads defer to `pi-permission-system`.
-3. LLM writes the plan to `<agentDir>/plans/<slug>.md` (global plans dir + random 3-word `adjective-verb-noun` slug, e.g. `~/.pi/agent/plans/gleaming-brewing-phoenix.md`). The slug is stable per session and survives `/resume`; `/new` clears it.
-4. LLM invokes the `ExitPlanMode` tool → user picks one of six options:
-   - **Yes, clear context and auto-accept edits on plan exit**
-   - **Yes, auto-accept edits on plan exit**
-   - **Yes, clear context and bypass permissions on plan exit**
-   - **Yes, bypass permissions on plan exit** (gated behind an opt-in confirmation)
-   - **No, stay in plan mode**
-   - **No, and let me refine the plan** (opens an editor for notes)
-
-In TUI mode the user sees a centered overlay (matching Claude Code's `ExitPlanModePermissionRequest`):
-the plan content is rendered as Markdown in a boxed panel above the option list, so the user always sees exactly what they are approving. Keyboard shortcuts:
-
-- `Enter` — commit the highlighted option
-- `Esc` — "No, stay in plan mode"
-- `Shift+Tab` — "Yes, auto-accept edits" shortcut
-- `Ctrl+G` — edit the plan in `$EDITOR` (refreshes dialog content)
-- `1`/`2`/`3`/`4` — jump to option N
-
-When the plan file is empty or whitespace-only, a simplified 2-option dialog ("Yes, proceed without a plan" / "No, stay in plan mode") is shown instead. Headless (RPC/print) mode falls back to the original 3-option `ui.select()` selector.
 
 ## CLI
 
@@ -115,39 +138,3 @@ pi --permission-mode ask              # alias for default
 - `/default`, `/acceptEdits`, `/plan`, `/bypassPermissions`, `/auto`
 - `/mode <name>` — set mode by alias
 - `/mode` — open an interactive selector
-
-## Install
-
-```bash
-# Drop the directory into ~/.pi/agent/extensions/picc-permission-modes
-# (or install via npm/pnpm once published)
-```
-
-The extension is auto-loaded by pi on next session start.
-
-## Test
-
-```bash
-npm install
-npm test
-```
-
-## Files
-
-| File | Purpose |
-| --- | --- |
-| `index.ts` | Wiring: lifecycle, mode switching, gate, footer, plan-mode attachments. |
-| `types.ts` | Pure type definitions (`PermissionMode`, `PermissionResult`, `PermissionUpdate`, …). |
-| `permissionContext.ts` | Rule/path matching, dangerous-path detection, `applyPermissionUpdate`. |
-| `enterPlanModeTool.ts` | `EnterPlanMode` tool definition. |
-| `exitPlanModeTool.ts` | `ExitPlanMode` tool — dispatches to the TUI overlay in TUI mode, falls back to `ui.select()` in headless mode. |
-| `exitPlanModeDialog.ts` | TUI overlay component that renders the plan as Markdown with the option list (mirrors claude-code's `ExitPlanModePermissionRequest`). |
-| `exitPlanModeDialog.test.ts` | Unit tests for the overlay component (render + keyboard handling). |
-| `modeMeta.ts` | Mode metadata + change-notification strings. |
-| `utils.ts` | Small helpers (read-only-command allowlist, plan-file path, shortenPath). |
-| `auto-mode.ts` | Auto-mode orchestrator: safe-allowlist → classifier → denial tracking; unavailable vs blocked; transcript compaction + `<user_instructions>`. |
-| `auto-mode-config.ts` | Config loader for the `autoMode` block (rule lists, provider, limits). |
-| `auto-mode-prompts.ts` | Classifier system-prompt template + XML `<block>`/`<reason>` parser. |
-| `auto-mode-provider.ts` | Minimal Anthropic-protocol HTTP client (retries 429/5xx, timeout). |
-| `auto-mode.test.ts` | Orchestrator unit tests: unavailable/fail-closed, denial limits, transcript shape. |
-| `index.test.ts` | Gate matrix, cycle, plan-mode attachment, ExitPlanMode dispatch, dangerous paths, persistence. |
