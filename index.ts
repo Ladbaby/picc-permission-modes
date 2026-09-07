@@ -263,6 +263,9 @@ function cycleFromMode(
   );
 }
 function resolveAutoModeConfigPath(): string {
+  if (process.env.PICC_PERMISSION_MODES_CONFIG_PATH) {
+    return process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
+  }
   const here = dirname(fileURLToPath(import.meta.url));
   return join(here, "config.json");
 }
