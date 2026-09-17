@@ -32,6 +32,7 @@ All configuration lives in a single JSON file (the extension's `config.json`), w
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PICC_PERMISSION_MODES_CONFIG_PATH` | `<extension dir>/config.json` | Absolute path to the extension's `config.json`. Override to point at a config in a different location. |
+| `PICC_PERMISSION_MODE` | *(unset)* | Initial permission mode for **headless / SDK** hosts (e.g. the `picc-claude-shim` driven by T3 Code). Set to one of `default`, `acceptEdits`, `plan`, `bypassPermissions`, `auto` (camelCase or kebab-case). Headless pi sessions never fire `session_start`, so the `--permission-mode` flag is never seen — this var is how a host tells the gate which mode to start in. Without it, a headless session stays on `default` and auto-rejects every non-allow tool call. |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Directory the loader reads `settings.json` from when falling back to Claude Code's permissions block. |
 | `ANTHROPIC_AUTH_TOKEN` | *(unset)* | API key for the `auto` mode LLM classifier. Used when `autoMode.provider.apiKey` is unset, and interpolated into `"${ANTHROPIC_AUTH_TOKEN}"` placeholders in `config.json`. |
 
