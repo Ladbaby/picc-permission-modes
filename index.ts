@@ -418,6 +418,16 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
     }
   }
   let currentMode: PermissionMode = "default";
+  // Headless / SDK hosts (e.g. picc-claude-shim driven by T3) build their pi
+  // session via `createAgentSession` directly and never call `bindExtensions`,
+  // so pi never fires `session_start` for them. That means `applyFlagOverride`
+  // (which runs on session_start) never runs and this gate would stay on
+  // "default" — auto-rejecting every non-allow tool call even when the host
+  // selected "Full access". The shim hands the host-selected mode in via the
+  // `PICC_PERMISSION_MODE` env var (set before extensions register), so apply
+  // it here. `session_start` still runs `applyFlagOverride` for TUI hosts, so
+  // an explicit `--permission-mode` flag there keeps working.
+  applyHostModeFromEnv();
   /** Session id of the active session, captured at session_start. Used by
    *  `persistState` to record the session's plan-file slug so `/resume`
    *  reuses the same plan file. */
@@ -1525,6 +1535,33 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
       ask: "default",
     };
     const resolved = m[flag.toLowerCase()];
+    if (resolved && resolved !== currentMode) {
+      currentMode = resolved;
+      state.ctx = { ...state.ctx, mode: resolved };
+      if (resolved !== "plan") {
+        state.needsPlanModeExitAttachment = false;
+      }
+    }
+  }
+  function applyHostModeFromEnv(): void {
+    const raw = process.env.PICC_PERMISSION_MODE;
+    if (!raw || raw.trim().length === 0) return;
+    const m: Record<string, PermissionMode> = {
+      default: "default",
+      acceptEdits: "acceptEdits",
+      "accept-edits": "acceptEdits",
+      acceptedits: "acceptEdits",
+      plan: "plan",
+      bypassPermissions: "bypassPermissions",
+      "bypass-permissions": "bypassPermissions",
+      bypasspermissions: "bypassPermissions",
+      bypass: "bypassPermissions",
+      auto: "auto",
+      ask: "default",
+      dontAsk: "default",
+      "dont-ask": "default",
+    };
+    const resolved = m[raw.toLowerCase()];
     if (resolved && resolved !== currentMode) {
       currentMode = resolved;
       state.ctx = { ...state.ctx, mode: resolved };
