@@ -4,8 +4,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync, existsSync, mkdirSync, appendFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+import { ensurePermissionModesConfig, resolvePermissionModesConfigPath } from "./config-path.ts";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { AutoMode, getAutoMode, setAutoMode } from "./auto-mode.ts";
 import { loadAutoModeConfig } from "./auto-mode-config.ts";
@@ -263,11 +263,7 @@ function cycleFromMode(
   );
 }
 function resolveAutoModeConfigPath(): string {
-  if (process.env.PICC_PERMISSION_MODES_CONFIG_PATH) {
-    return process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
-  }
-  const here = dirname(fileURLToPath(import.meta.url));
-  return join(here, "config.json");
+  return resolvePermissionModesConfigPath();
 }
 export function loadSubagentModeConfig(
   configPath: string,
@@ -371,7 +367,10 @@ function ensureAutoModeLogSink(
 }
 function initializeAutoMode(): void {
   if (getAutoMode()) return;
-  const configPath = resolveAutoModeConfigPath();
+  const resolvedConfigPath = resolveAutoModeConfigPath();
+  const configPath = process.env.PICC_PERMISSION_MODES_CONFIG_PATH
+    ? resolvedConfigPath
+    : ensurePermissionModesConfig(resolvedConfigPath);
   const { config, issues } = loadAutoModeConfig(configPath);
   for (const issue of issues) {
     console.warn(`picc-permission-modes auto-mode: ${issue}`);
@@ -386,7 +385,12 @@ export function setInteractiveModeForTests(mode: PermissionMode | undefined): vo
 }
 export default function permissionModesExtension(pi: ExtensionAPI): void {
   initializeAutoMode();
-  const subagentModeOverride = loadSubagentModeConfig(resolveAutoModeConfigPath());
+  const resolvedConfigPath = resolveAutoModeConfigPath();
+  const subagentModeOverride = loadSubagentModeConfig(
+    process.env.PICC_PERMISSION_MODES_CONFIG_PATH
+      ? resolvedConfigPath
+      : ensurePermissionModesConfig(resolvedConfigPath),
+  );
   const state = emptyState();
   const userPermissions = loadUserPermissions();
   function applyUserPermissions(

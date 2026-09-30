@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { resolvePermissionModesConfigPath } from "./config-path.ts";
 export interface UserPermissions {
   allow: string[];
   deny: string[];
@@ -15,11 +15,7 @@ const EMPTY: UserPermissions = {
   source: "none",
 };
 function resolveLocalConfigPath(): string {
-  if (process.env.PICC_PERMISSION_MODES_CONFIG_PATH) {
-    return process.env.PICC_PERMISSION_MODES_CONFIG_PATH;
-  }
-  const here = dirname(fileURLToPath(import.meta.url));
-  return join(here, "config.json");
+  return resolvePermissionModesConfigPath();
 }
 function resolveClaudeSettingsPath(): string {
   const claudeConfigDir = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
