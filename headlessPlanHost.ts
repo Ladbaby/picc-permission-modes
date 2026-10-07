@@ -1,4 +1,22 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { PermissionMode } from "./types.ts";
+
+export const HOST_MODE_REQUEST = "picc:permission-host:set-mode";
+export interface HostModeRequest {
+  mode: PermissionMode;
+  ctx: ExtensionContext;
+  signal?: AbortSignal;
+  handled: boolean;
+  respond: (error?: string) => void;
+}
+
+/** A host capability belongs to one session, never to its headless children. */
+export const PLAN_HOST_CAPABILITY = "picc:plan-host:capability";
+export function hasPlanHost(events: ExtensionAPI["events"], ctx: ExtensionContext): boolean {
+  const probe = { sessionId: ctx.sessionManager.getSessionId(), available: false };
+  events.emit(PLAN_HOST_CAPABILITY, probe);
+  return probe.available;
+}
 
 /** In-process bridge only: callbacks and AbortSignal never go on the wire. */
 export const PLAN_HOST_REQUEST = "picc:plan-host:request";

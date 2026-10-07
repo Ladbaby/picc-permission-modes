@@ -137,7 +137,7 @@ import {
 } from "./types.ts";
 import { makeEnterPlanModeTool } from "./enterPlanModeTool.ts";
 import { makeExitPlanModeTool } from "./exitPlanModeTool.ts";
-import { requestPlanHost } from "./headlessPlanHost.ts";
+import { hasPlanHost, HOST_MODE_REQUEST, requestPlanHost, type HostModeRequest } from "./headlessPlanHost.ts";
 import { modeMetaTitle } from "./modeMeta.ts";
 import {
   createFilePermissionDialogFactory,
@@ -605,8 +605,36 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
     type: "string",
   });
   let lastCtx: ExtensionContext | null = null;
+  pi.events.on(HOST_MODE_REQUEST, (data) => {
+    const request = data as HostModeRequest;
+    // Only this session's host may drive state. Child sessions have no capability.
+    if (!hasPlanHost(pi.events, request.ctx)) return;
+    request.handled = true;
+    void (async () => {
+      if (request.signal?.aborted) throw new Error("cancelled by client");
+      if (!["default", "acceptEdits", "plan", "bypassPermissions", "auto"].includes(request.mode)) {
+        throw new Error(`Unsupported permission mode: ${String(request.mode)}`);
+      }
+      lastCtx = request.ctx;
+      currentSessionId = request.ctx.sessionManager.getSessionId();
+      state.originalCwd = request.ctx.cwd;
+      if (request.mode === "plan" && currentMode !== "plan") {
+        state.ctx = { ...state.ctx, prePlanMode: currentMode };
+        state.planModeAttachmentCount = 0;
+        state.needsPlanModeExitAttachment = false;
+        ensurePlansDir();
+      }
+      await setMode(request.mode, request.ctx);
+      if (request.mode !== "plan") {
+        const { prePlanMode: _, ...rest } = state.ctx;
+        state.ctx = rest;
+        persistState();
+      }
+    })().then(() => request.respond(), (error: unknown) => request.respond(String(error)));
+  });
   pi.registerTool(
     makeEnterPlanModeTool({
+      canUseHeadless: (ctx) => hasPlanHost(pi.events, ctx),
       requestHeadless: (toolCallId, signal) => requestPlanHost(pi.events, "EnterPlanMode", toolCallId, {}, signal),
       onEnterPlanMode: async (ctx) => {
         const previous = currentMode;
@@ -655,6 +683,9 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event, ctx): Promise<{ block: true; reason: string } | undefined> => {
     const tool = event.toolName;
     const input = (event.input ?? {}) as Record<string, unknown>;
+    if ((tool === "EnterPlanMode" || tool === "ExitPlanMode") && !ctx.hasUI && !hasPlanHost(pi.events, ctx)) {
+      return { block: true, reason: `${tool} requires an interactive UI or a connected host control channel; subagents cannot use this tool.` };
+    }
     if (tool === "edit" || tool === "write") {
       const target = extractToolPath(input);
       const planPath = getPlanFilePath(ctx.sessionManager.getSessionId());
@@ -1288,6 +1319,7 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
   }
   pi.registerTool(
     makeExitPlanModeTool({
+      canUseHeadless: (ctx) => hasPlanHost(pi.events, ctx),
       requestHeadless: (toolCallId, input, signal) => requestPlanHost(pi.events, "ExitPlanMode", toolCallId, input, signal),
       headlessExitMode: (decision) => {
         if (decision.behavior === "allow") {

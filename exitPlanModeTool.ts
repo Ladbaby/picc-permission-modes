@@ -10,6 +10,7 @@ import {
 import { getPlanFilePath } from "./utils.ts";
 import type { PlanHostDecision } from "./headlessPlanHost.ts";
 export interface ExitPlanModeState {
+  canUseHeadless?: (ctx: ExtensionContext) => boolean;
   requestHeadless?: (toolCallId: string, input: Record<string, unknown>, signal?: AbortSignal) => Promise<PlanHostDecision>;
   headlessExitMode?: (decision: PlanHostDecision) => PermissionMode;
   planText: (ctx: ExtensionContext) => Promise<string>;
@@ -76,6 +77,12 @@ export function makeExitPlanModeTool(state: ExitPlanModeState) {
       ),
     }),
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
+      if (!ctx.hasUI && !state.canUseHeadless?.(ctx)) {
+        return {
+          content: [{ type: "text", text: "ExitPlanMode requires an interactive UI or a connected host control channel; subagents cannot use this tool." }],
+          details: { exited: false, choice: "stay" },
+        };
+      }
       let planText = "";
       try {
         planText = await state.planText(ctx);

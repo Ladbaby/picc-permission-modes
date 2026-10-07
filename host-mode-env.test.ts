@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import permissionModesExtension from "./index.ts";
+import { createEventBus } from "@earendil-works/pi-coding-agent";
 
 /**
  * Regression test for the headless host-mode contract (Option B).
@@ -29,6 +30,7 @@ function makeFakePi() {
   };
   const noop = () => {};
   return {
+    events: createEventBus(),
     on,
     registerFlag: noop,
     registerTool: noop,

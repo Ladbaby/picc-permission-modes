@@ -64,6 +64,7 @@ User: "What files handle routing?"
 - If unsure whether to use it, err on the side of planning - it's better to get alignment upfront than to redo work
 - Users appreciate being consulted before significant changes are made to their codebase`;
 export interface EnterPlanModeState {
+  canUseHeadless?: (ctx: ExtensionContext) => boolean;
   onEnterPlanMode: (ctx: ExtensionContext) => void | Promise<void>;
   requestHeadless?: (toolCallId: string, signal?: AbortSignal) => Promise<PlanHostDecision>;
   onDeclinePlanMode: () => void;
@@ -77,6 +78,12 @@ export function makeEnterPlanModeTool(state: EnterPlanModeState) {
     parameters: Type.Object({}),
     async execute(toolCallId, _params, signal, _onUpdate, ctx) {
       let approved: boolean;
+      if (!ctx.hasUI && !state.canUseHeadless?.(ctx)) {
+        return {
+          content: [{ type: "text", text: "EnterPlanMode requires an interactive UI or a connected host control channel; subagents cannot use this tool." }],
+          details: { entered: false, declined: true },
+        };
+      }
       if (!ctx.hasUI) {
         const decision = await state.requestHeadless?.(toolCallId, signal);
         if (!decision || decision.behavior === "deny") {

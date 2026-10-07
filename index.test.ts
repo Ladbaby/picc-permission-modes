@@ -11,7 +11,7 @@ import { join, sep, dirname } from "node:path";
 import * as path from "node:path";
 import { tmpdir, homedir } from "node:os";
 import { createEventBus } from "@earendil-works/pi-coding-agent";
-import { PLAN_HOST_REQUEST, type PlanHostRequest } from "./headlessPlanHost.ts";
+import { PLAN_HOST_CAPABILITY, PLAN_HOST_REQUEST, HOST_MODE_REQUEST, type HostModeRequest, type PlanHostRequest } from "./headlessPlanHost.ts";
 import permissionModesExtension, { loadSubagentModeConfig, setInteractiveModeForTests, CLASSIFIER_NOTE_MARKER } from "./index.ts";
 import {
   buildContext,
@@ -1527,6 +1527,10 @@ describe("ExitPlanMode tool", () => {
     const ctx = pi.fakeCtxFor({ cwd, hasUI: false });
     let captured: PlanHostRequest | undefined;
     let denyExit = true;
+    pi.events.on(PLAN_HOST_CAPABILITY, (data) => {
+      const probe = data as { sessionId: string; available: boolean };
+      if (probe.sessionId === "test-session") probe.available = true;
+    });
     pi.events.on(PLAN_HOST_REQUEST, (value) => {
       const request = value as PlanHostRequest;
       captured = request;
@@ -1591,6 +1595,9 @@ describe("EnterPlanMode tool", () => {
     await pi.simulateCommand("bypassPermissions", "");
     const ctx = pi.fakeCtxFor({ cwd, hasUI: false });
     let approve = false;
+    pi.events.on(PLAN_HOST_CAPABILITY, (data) => {
+      (data as { available: boolean }).available = true;
+    });
     pi.events.on(PLAN_HOST_REQUEST, (data) => {
       const request = data as PlanHostRequest;
       request.handled = true;
@@ -1604,6 +1611,63 @@ describe("EnterPlanMode tool", () => {
     const entered = await pi.simulateToolExecution("EnterPlanMode", {}, ctx);
     expect(entered.details.entered).toBe(true);
     expect((pi.appendEntries.at(-1)?.data as { mode: string }).mode).toBe("plan");
+  });
+  it("rejects both child plan tools before host requests or UI, even on a parent-connected bus", async () => {
+    const ctx = pi.fakeCtxFor({ cwd, hasUI: false });
+    ctx.sessionManager.getSessionId = () => "child-session";
+    const hostRequest = vi.fn();
+    pi.events.on(PLAN_HOST_REQUEST, hostRequest);
+    pi.events.on(PLAN_HOST_CAPABILITY, (data) => {
+      const probe = data as { sessionId: string; available: boolean };
+      if (probe.sessionId === "parent-session") probe.available = true;
+    });
+    ctx.ui.confirm = vi.fn(() => { throw new Error("must not prompt"); });
+    ctx.ui.select = vi.fn(() => { throw new Error("must not prompt"); });
+    ctx.ui.custom = vi.fn(() => { throw new Error("must not prompt"); });
+    for (const mode of ["default", "acceptEdits", "bypassPermissions", "auto", "plan"]) {
+      await pi.simulateCommand(mode, "", ctx);
+      for (const name of ["EnterPlanMode", "ExitPlanMode"]) {
+        expect(await pi.simulateToolCall(name, {}, ctx)).toMatchObject({ block: true });
+        const result = await pi.simulateToolExecution(name, {}, ctx);
+        expect(result.content[0].text).toContain("subagents cannot use this tool");
+      }
+    }
+    expect(hostRequest).not.toHaveBeenCalled();
+    expect(ctx.ui.confirm).not.toHaveBeenCalled();
+    expect(ctx.ui.select).not.toHaveBeenCalled();
+    expect(ctx.ui.custom).not.toHaveBeenCalled();
+  });
+  it.each(["bypassPermissions", "default", "acceptEdits"])("applies host plan -> %s to actual extension state without granting extra rules", async (baseMode) => {
+    const ctx = pi.fakeCtxFor({ cwd, hasUI: false });
+    pi.events.on(PLAN_HOST_CAPABILITY, (data) => {
+      (data as { available: boolean }).available = true;
+    });
+    const apply = (mode: HostModeRequest["mode"]) => new Promise<void>((resolve, reject) => {
+      const request: HostModeRequest = { mode, ctx, handled: false, respond: (error) => error ? reject(new Error(error)) : resolve() };
+      pi.events.emit(HOST_MODE_REQUEST, request);
+      expect(request.handled).toBe(true);
+    });
+    await apply(baseMode as HostModeRequest["mode"]);
+    await apply("plan");
+    await apply("plan");
+    const planState = pi.appendEntries.at(-1)?.data as { mode: string; prePlanMode: string; planSlug: string };
+    expect(planState.mode).toBe("plan");
+    expect(planState.prePlanMode).toBe(baseMode);
+    expect(planState.planSlug).toBeTruthy();
+    const reminder = await pi.handlers.get("before_agent_start")![0]({}, ctx) as { message: { content: string } };
+    expect(reminder.message.content).toContain(getPlanFilePath("test-session"));
+    // Do not allow classifier/model execution in this state-only regression.
+    expect(await pi.simulateToolCall("write", { file_path: getPlanFilePath("test-session"), content: "plan" }, ctx)).toBeUndefined();
+    await apply(baseMode as HostModeRequest["mode"]);
+    const restored = pi.appendEntries.at(-1)?.data as { mode: string; prePlanMode?: string; alwaysAllowRules: Record<string, string[]> };
+    expect(restored.mode).toBe(baseMode);
+    expect(restored.prePlanMode).toBeUndefined();
+    expect(restored.alwaysAllowRules.session ?? []).not.toContain("Bash(*)");
+    const exitReminder = await pi.handlers.get("before_agent_start")![0]({}, ctx) as { message: { content: string } };
+    expect(exitReminder.message.content).toContain("Exited Plan Mode");
+    const gate = await pi.simulateToolCall("write", { file_path: join(cwd, "host-write.txt"), content: "ok" }, ctx);
+    if (baseMode === "default") expect(gate).toMatchObject({ block: true });
+    else expect(gate).toBeUndefined();
   });
   it("is registered with name 'EnterPlanMode'", () => {
     expect(pi.registeredTools.some((t) => t.name === "EnterPlanMode")).toBe(true);
