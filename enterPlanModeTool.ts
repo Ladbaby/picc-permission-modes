@@ -1,5 +1,7 @@
 import { Type } from "typebox";
 import { defineTool } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { PlanHostDecision } from "./headlessPlanHost.ts";
 export const ENTER_PLAN_MODE_PROMPT = `Use this tool proactively when you're about to start a non-trivial implementation task. Getting user sign-off on your approach before writing code prevents wasted effort and ensures alignment. This tool transitions you into plan mode where you can explore the codebase and design an implementation approach for user approval.
 ## When to Use This Tool
 **Prefer using EnterPlanMode** for implementation tasks unless they're simple. Use it when ANY of these conditions apply:
@@ -62,7 +64,8 @@ User: "What files handle routing?"
 - If unsure whether to use it, err on the side of planning - it's better to get alignment upfront than to redo work
 - Users appreciate being consulted before significant changes are made to their codebase`;
 export interface EnterPlanModeState {
-  onEnterPlanMode: () => void;
+  onEnterPlanMode: (ctx: ExtensionContext) => void | Promise<void>;
+  requestHeadless?: (toolCallId: string, signal?: AbortSignal) => Promise<PlanHostDecision>;
   onDeclinePlanMode: () => void;
 }
 export function makeEnterPlanModeTool(state: EnterPlanModeState) {
@@ -72,22 +75,24 @@ export function makeEnterPlanModeTool(state: EnterPlanModeState) {
     description: ENTER_PLAN_MODE_PROMPT,
     promptSnippet: "Enter plan mode for read-only exploration and a written plan before implementation.",
     parameters: Type.Object({}),
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+    async execute(toolCallId, _params, signal, _onUpdate, ctx) {
+      let approved: boolean;
       if (!ctx.hasUI) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Error: EnterPlanMode requires an interactive TUI session.`,
-            },
-          ],
-          details: { entered: false, declined: true },
-        };
+        const decision = await state.requestHeadless?.(toolCallId, signal);
+        if (!decision || decision.behavior === "deny") {
+          state.onDeclinePlanMode();
+          return {
+            content: [{ type: "text", text: decision?.message ?? "EnterPlanMode requires an interactive UI or connected host." }],
+            details: { entered: false, declined: true },
+          };
+        }
+        approved = true;
+      } else {
+        approved = await ctx.ui.confirm(
+          "Enter plan mode?",
+          "Pi wants to stop and design an implementation approach before making changes. Enter plan mode?",
+        );
       }
-      const approved = await ctx.ui.confirm(
-        "Enter plan mode?",
-        "Pi wants to stop and design an implementation approach before making changes. Enter plan mode?",
-      );
       if (!approved) {
         state.onDeclinePlanMode();
         return {
@@ -95,7 +100,11 @@ export function makeEnterPlanModeTool(state: EnterPlanModeState) {
           details: { entered: false, declined: true },
         };
       }
-      state.onEnterPlanMode();
+      if (signal?.aborted) return {
+        content: [{ type: "text", text: "cancelled by client" }],
+        details: { entered: false, declined: true },
+      };
+      await state.onEnterPlanMode(ctx);
       return {
         content: [
           {

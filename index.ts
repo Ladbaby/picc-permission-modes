@@ -137,6 +137,7 @@ import {
 } from "./types.ts";
 import { makeEnterPlanModeTool } from "./enterPlanModeTool.ts";
 import { makeExitPlanModeTool } from "./exitPlanModeTool.ts";
+import { requestPlanHost } from "./headlessPlanHost.ts";
 import { modeMetaTitle } from "./modeMeta.ts";
 import {
   createFilePermissionDialogFactory,
@@ -606,13 +607,27 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
   let lastCtx: ExtensionContext | null = null;
   pi.registerTool(
     makeEnterPlanModeTool({
-      onEnterPlanMode: () => {
+      requestHeadless: (toolCallId, signal) => requestPlanHost(pi.events, "EnterPlanMode", toolCallId, {}, signal),
+      onEnterPlanMode: async (ctx) => {
         const previous = currentMode;
+        if (previous === "plan") return;
+        lastCtx = ctx;
+        currentSessionId = ctx.sessionManager.getSessionId();
+        state.originalCwd = ctx.cwd;
         state.ctx = {
           ...state.ctx,
           prePlanMode: previous,
         };
-        void setMode("plan", lastCtx ?? makeOfflineCtx(), {});
+        await setMode("plan", ctx, {});
+        // before_agent_start only runs once per prompt, not after this tool.
+        // Supply the plan path and restrictions immediately for the next model step.
+        const planPath = getPlanFilePath(currentSessionId);
+        ensurePlansDir();
+        pi.sendMessage({
+          customType: "permission-modes:plan-mode",
+          content: wrapInSystemReminder(planModeInstructions(planPath, existsSync(planPath))),
+          display: false,
+        });
       },
       onDeclinePlanMode: () => {},
     }),
@@ -1273,6 +1288,19 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
   }
   pi.registerTool(
     makeExitPlanModeTool({
+      requestHeadless: (toolCallId, input, signal) => requestPlanHost(pi.events, "ExitPlanMode", toolCallId, input, signal),
+      headlessExitMode: (decision) => {
+        if (decision.behavior === "allow") {
+          for (const update of decision.updatedPermissions ?? []) {
+            if (update && typeof update === "object") {
+              const candidate = update as { type?: string; mode?: PermissionMode };
+              if (candidate.type === "setMode" && candidate.mode && candidate.mode !== "plan" &&
+                ["default", "acceptEdits", "bypassPermissions", "auto"].includes(candidate.mode)) return candidate.mode;
+            }
+          }
+        }
+        return state.ctx.prePlanMode ?? "default";
+      },
       planText: async (ctx) => readPlanFile(ctx),
       applyExit: async (ctx, { mode, plan, allowedPrompts }) => {
         await applyPlanExit(mode, plan, ctx, allowedPrompts);

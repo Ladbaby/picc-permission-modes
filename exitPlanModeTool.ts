@@ -8,7 +8,10 @@ import {
   type ExitPlanModeDialogResult,
 } from "./exitPlanModeDialog.ts";
 import { getPlanFilePath } from "./utils.ts";
+import type { PlanHostDecision } from "./headlessPlanHost.ts";
 export interface ExitPlanModeState {
+  requestHeadless?: (toolCallId: string, input: Record<string, unknown>, signal?: AbortSignal) => Promise<PlanHostDecision>;
+  headlessExitMode?: (decision: PlanHostDecision) => PermissionMode;
   planText: (ctx: ExtensionContext) => Promise<string>;
   applyExit: (
     ctx: ExtensionContext,
@@ -72,12 +75,33 @@ export function makeExitPlanModeTool(state: ExitPlanModeState) {
         }),
       ),
     }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(toolCallId, params, signal, _onUpdate, ctx) {
       let planText = "";
       try {
         planText = await state.planText(ctx);
       } catch {
         planText = "(no plan file found)";
+      }
+      if (!ctx.hasUI && state.requestHeadless) {
+        const decision = await state.requestHeadless(toolCallId, {
+          ...params,
+          plan: planText,
+          filePath: getPlanFilePath(ctx.sessionManager.getSessionId()),
+        }, signal);
+        if (decision.behavior === "deny" || signal?.aborted) {
+          return {
+            content: [{ type: "text", text: decision.behavior === "deny" ? decision.message : "cancelled by client" }],
+            details: { exited: false, choice: "stay" },
+          };
+        }
+        const editedPlan = decision.updatedInput?.plan;
+        const echo = typeof editedPlan === "string" ? editedPlan : planText;
+        const mode = state.headlessExitMode?.(decision) ?? "default";
+        await state.applyExit(ctx, { mode, plan: echo, allowedPrompts: params.allowedPrompts });
+        return {
+          content: [{ type: "text", text: buildPlanApprovalToolResult(echo) }],
+          details: { exited: true, mode },
+        };
       }
       let result: ExitPlanModeDialogResult;
       if (ctx.hasUI) {

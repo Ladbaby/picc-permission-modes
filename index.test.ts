@@ -10,6 +10,8 @@ import { mkdtempSync } from "node:fs";
 import { join, sep, dirname } from "node:path";
 import * as path from "node:path";
 import { tmpdir, homedir } from "node:os";
+import { createEventBus } from "@earendil-works/pi-coding-agent";
+import { PLAN_HOST_REQUEST, type PlanHostRequest } from "./headlessPlanHost.ts";
 import permissionModesExtension, { loadSubagentModeConfig, setInteractiveModeForTests, CLASSIFIER_NOTE_MARKER } from "./index.ts";
 import {
   buildContext,
@@ -49,6 +51,7 @@ interface FakeUi {
   ) => Promise<T>;
 }
 interface FakePi {
+  events: ReturnType<typeof createEventBus>;
   handlers: Map<string, Handler[]>;
   commands: Map<string, CommandHandler>;
   shortcuts: Map<string, Handler>;
@@ -154,6 +157,7 @@ function createFakePi(): FakePi {
     };
   }
   const pi: FakePi = {
+    events: createEventBus(),
     handlers,
     commands,
     shortcuts,
@@ -1489,7 +1493,7 @@ describe("ExitPlanMode tool", () => {
     const last = pi.appendEntries[pi.appendEntries.length - 1];
     expect((last.data as any).mode).toBe("plan");
   });
-  it("custom factory is NOT invoked in headless mode; falls back to ctx.ui.select", async () => {
+  it("headless exit fails closed without a connected host and never uses no-op UI", async () => {
     let selectCalled = false;
     let customCalled = false;
     const ctx = pi.fakeCtxFor({
@@ -1513,9 +1517,38 @@ describe("ExitPlanMode tool", () => {
       {},
       ctx,
     );
-    expect(selectCalled).toBe(true);
+    expect(selectCalled).toBe(false);
     expect(customCalled).toBe(false);
-    expect((result as any).content[0].text).toContain("Approved Plan");
+    expect((result as any).content[0].text).toContain("connected host control channel");
+    expect(result.details.exited).toBe(false);
+  });
+  it("sends plan/filePath to the host, preserves T3 denial, and restores mode on approval", async () => {
+    await pi.simulateCommand("bypassPermissions", "");
+    const ctx = pi.fakeCtxFor({ cwd, hasUI: false });
+    let captured: PlanHostRequest | undefined;
+    let denyExit = true;
+    pi.events.on(PLAN_HOST_REQUEST, (value) => {
+      const request = value as PlanHostRequest;
+      captured = request;
+      request.handled = true;
+      request.respond(request.toolName === "ExitPlanMode" && denyExit
+        ? { behavior: "deny", message: "The client captured your proposed plan. Stop here and wait." }
+        : { behavior: "allow", updatedInput: request.toolName === "ExitPlanMode" ? { plan: "# Edited plan" } : {} });
+    });
+    await pi.simulateToolExecution("EnterPlanMode", {}, ctx);
+    expect((pi.appendEntries.at(-1)?.data as { mode: string }).mode).toBe("plan");
+    expect((pi.appendEntries.at(-1)?.data as { prePlanMode: string }).prePlanMode).toBe("bypassPermissions");
+    expect(pi.sentMessages.at(-1)?.message.content).toContain(getPlanFilePath("test-session"));
+    writePlan("# Headless proposed plan");
+    const denied = await pi.simulateToolExecution("ExitPlanMode", {}, ctx);
+    expect(captured?.input.plan).toBe("# Headless proposed plan");
+    expect(captured?.input.filePath).toBe(getPlanFilePath("test-session"));
+    expect(denied.content[0].text).toContain("Stop here and wait");
+    expect((pi.appendEntries.at(-1)?.data as { mode: string }).mode).toBe("plan");
+    denyExit = false;
+    const approved = await pi.simulateToolExecution("ExitPlanMode", {}, ctx);
+    expect(approved.content[0].text).toContain("# Edited plan");
+    expect((pi.appendEntries.at(-1)?.data as { mode: string }).mode).toBe("bypassPermissions");
   });
   it("applies allowedPrompts as session allow rules on exit (allowedPrompts schema)", async () => {
     writePlan("# My Plan");
@@ -1553,6 +1586,24 @@ describe("EnterPlanMode tool", () => {
     pi = createFakePi();
     permissionModesExtension(makeFakePiForExtension(pi));
     await pi.simulateSessionStart(cwd);
+  });
+  it("headless entry denial preserves mode, while a host approval enters plan mode", async () => {
+    await pi.simulateCommand("bypassPermissions", "");
+    const ctx = pi.fakeCtxFor({ cwd, hasUI: false });
+    let approve = false;
+    pi.events.on(PLAN_HOST_REQUEST, (data) => {
+      const request = data as PlanHostRequest;
+      request.handled = true;
+      request.respond(approve ? { behavior: "allow" } : { behavior: "deny", message: "Not now" });
+    });
+    const denied = await pi.simulateToolExecution("EnterPlanMode", {}, ctx);
+    expect(denied.details.entered).toBe(false);
+    expect(denied.content[0].text).toBe("Not now");
+    expect((pi.appendEntries.at(-1)?.data as { mode: string }).mode).toBe("bypassPermissions");
+    approve = true;
+    const entered = await pi.simulateToolExecution("EnterPlanMode", {}, ctx);
+    expect(entered.details.entered).toBe(true);
+    expect((pi.appendEntries.at(-1)?.data as { mode: string }).mode).toBe("plan");
   });
   it("is registered with name 'EnterPlanMode'", () => {
     expect(pi.registeredTools.some((t) => t.name === "EnterPlanMode")).toBe(true);
