@@ -174,40 +174,94 @@ export type ModeColorKey =
   | "error"
   | "success"
   | "dim";
+export interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+/** Which background a mode color is meant to sit on. */
+export type ModeAppearance = "dark" | "light";
 export interface ModeMeta {
   title: string;
   shortTitle: string;
   symbol: string;
+  /** Nearest pi theme token, used when the terminal has no truecolor. */
   color: ModeColorKey;
-  hexColor?: string;
+  /** Claude Code's exact colors for this mode, per theme appearance. */
+  palette: Record<ModeAppearance, RgbColor>;
 }
+/* Colors mirror Claude Code's `utils/permissions/PermissionMode.ts`
+ * PERMISSION_MODE_CONFIG (default=text, plan=planMode, acceptEdits=autoAccept,
+ * bypassPermissions=error, auto=warning) resolved against the themes in its
+ * `utils/theme.ts`, where the tokens are declared as `rgb()` literals:
+ * dark  -> autoAccept rgb(175,135,255), planMode rgb(72,150,140),
+ *          error rgb(255,107,128), warning rgb(255,193,7), text rgb(255,255,255)
+ * light -> autoAccept rgb(135,0,255), planMode rgb(0,102,102),
+ *          error rgb(171,43,63), warning rgb(150,108,30), text rgb(0,0,0) */
 export const MODE_META: Record<PermissionMode, ModeMeta> = {
-  default: { title: "Default", shortTitle: "Default", symbol: "", color: "muted" },
+  default: {
+    title: "Default",
+    shortTitle: "Default",
+    symbol: "",
+    color: "text",
+    palette: {
+      dark: { r: 0xff, g: 0xff, b: 0xff }, // rgb(255,255,255)
+      light: { r: 0x00, g: 0x00, b: 0x00 }, // rgb(0,0,0)
+    },
+  },
   acceptEdits: {
     title: "Accept edits",
     shortTitle: "Accept",
     symbol: "⏵⏵",
     color: "success",
+    palette: {
+      dark: { r: 0xaf, g: 0x87, b: 0xff }, // rgb(175,135,255)
+      light: { r: 0x87, g: 0x00, b: 0xff }, // rgb(135,0,255)
+    },
   },
   plan: {
     title: "Plan Mode",
     shortTitle: "Plan",
     symbol: "⏸",
     color: "accent",
+    palette: {
+      dark: { r: 0x48, g: 0x96, b: 0x8c }, // rgb(72,150,140)
+      light: { r: 0x00, g: 0x66, b: 0x66 }, // rgb(0,102,102)
+    },
   },
   bypassPermissions: {
     title: "Bypass Permissions",
     shortTitle: "Bypass",
     symbol: "⏵⏵",
     color: "error",
+    palette: {
+      dark: { r: 0xff, g: 0x6b, b: 0x80 }, // rgb(255,107,128)
+      light: { r: 0xab, g: 0x2b, b: 0x3f }, // rgb(171,43,63)
+    },
   },
   auto: {
     title: "Auto mode",
     shortTitle: "Auto",
     symbol: "⏵⏵",
     color: "warning",
-    hexColor: "#ffc107",
+    palette: {
+      dark: { r: 0xff, g: 0xc1, b: 0x07 }, // rgb(255,193,7)
+      light: { r: 0x96, g: 0x6c, b: 0x1e }, // rgb(150,108,30)
+    },
   },
 };
+export function modeRgb(
+  mode: PermissionMode,
+  appearance: ModeAppearance = "dark",
+): RgbColor {
+  return MODE_META[mode].palette[appearance];
+}
+export function modeHex(
+  mode: PermissionMode,
+  appearance: ModeAppearance = "dark",
+): string {
+  const { r, g, b } = modeRgb(mode, appearance);
+  return `#${[r, g, b].map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+}
 export const PAUSE_ICON = "\u23f8";
 export const PLAY_ICON = "\u25b6";

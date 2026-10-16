@@ -2164,12 +2164,14 @@ describe("Footer: mode line format", () => {
     pi: any,
     width: number,
     setup?: () => Promise<void>,
+    appearance: "dark" | "light" = "dark",
   ): Promise<string[]> {
     let captured: any = null;
     const branchEntries = pi.appendEntries
       .filter((e: any) => e.type === "modes")
       .map((e: any) => ({ type: "custom", customType: e.type, data: e.data }));
     const theme = {
+      appearance,
       fg: (_role: string, text: string) => text,
       bold: (t: string) => t,
       strikethrough: (t: string) => t,
@@ -2232,16 +2234,44 @@ describe("Footer: mode line format", () => {
     expect(combined).toContain("accept edits on");
     expect(combined).toContain("(shift+tab to cycle)");
   });
-  it("emitEdits in acceptEdits mode uses the purple hex #ccb1ff via truecolor ANSI", async () => {
-    const pi = createFakePi();
-    permissionModesExtension(makeFakePiForExtension(pi));
-    await pi.simulateSessionStart(process.cwd());
-    await pi.simulateCommand("acceptEdits", "");
-    const lines = await renderFooter(pi, 200);
-    const modeLine = lines[1] ?? "";
-    expect(modeLine).toContain("\u001b[38;2;204;177;255m");
-    expect(modeLine).toContain("accept edits on");
-  });
+  it.each([
+    ["acceptEdits", "\u001b[38;2;175;135;255m", "accept edits on"],
+    ["plan", "\u001b[38;2;72;150;140m", "plan mode on"],
+    ["bypassPermissions", "\u001b[38;2;255;107;128m", "bypass permissions on"],
+    ["auto", "\u001b[38;2;255;193;7m", "auto mode on"],
+    ["default", "\u001b[38;2;255;255;255m", "Default"],
+  ] as const)(
+    "dark theme: %s mode uses Claude Code's exact color via truecolor ANSI",
+    async (mode, ansi, label) => {
+      const pi = createFakePi();
+      permissionModesExtension(makeFakePiForExtension(pi));
+      await pi.simulateSessionStart(process.cwd());
+      await pi.simulateCommand(mode, "");
+      const lines = await renderFooter(pi, 200, undefined, "dark");
+      const modeLine = lines[1] ?? "";
+      expect(modeLine).toContain(ansi);
+      expect(modeLine).toContain(label);
+    },
+  );
+  it.each([
+    ["acceptEdits", "\u001b[38;2;135;0;255m", "accept edits on"],
+    ["plan", "\u001b[38;2;0;102;102m", "plan mode on"],
+    ["bypassPermissions", "\u001b[38;2;171;43;63m", "bypass permissions on"],
+    ["auto", "\u001b[38;2;150;108;30m", "auto mode on"],
+    ["default", "\u001b[38;2;0;0;0m", "Default"],
+  ] as const)(
+    "light theme: %s mode uses Claude Code's light-theme color",
+    async (mode, ansi, label) => {
+      const pi = createFakePi();
+      permissionModesExtension(makeFakePiForExtension(pi));
+      await pi.simulateSessionStart(process.cwd());
+      await pi.simulateCommand(mode, "");
+      const lines = await renderFooter(pi, 200, undefined, "light");
+      const modeLine = lines[1] ?? "";
+      expect(modeLine).toContain(ansi);
+      expect(modeLine).toContain(label);
+    },
+  );
   it("renders '\u23f5\u23f5 bypass permissions on (shift+tab to cycle)' in bypassPermissions mode", async () => {
     const pi = createFakePi();
     permissionModesExtension(makeFakePiForExtension(pi));

@@ -16,8 +16,6 @@ import {
 } from "./repoPermissionsConfig.ts";
 const CLASSIFIER_NOTE = "Allowed by auto mode classifier";
 export const CLASSIFIER_NOTE_MARKER = `${CLASSIFIER_NOTE}`;
-const ACCEPT_EDITS_HEX = "#ccb1ff";
-const ACCEPT_EDITS_RGB = { r: 0xcc, g: 0xb1, b: 0xff };
 const REQUIRES_USER_INTERACTION = new Set<string>([
   "AskUserQuestion",
 ]);
@@ -62,36 +60,29 @@ function truecolorSupported(): boolean {
   if (tc && (tc.toLowerCase() === "truecolor" || tc.toLowerCase() === "24bit")) return true;
   return true;
 }
-function formatAcceptEditsText(
-  theme: { fg: (color: string, text: string) => string },
+/**
+ * Claude Code renders the mode indicator with its own palette tokens, which pi's
+ * theme does not have (`autoAccept`, `planMode`). Emit those exact colors as
+ * truecolor instead of approximating them with pi's `success`/`accent`/`error`
+ * tokens; fall back to the nearest pi token on terminals without truecolor.
+ */
+function formatModeText(
+  theme: { fg: (color: string, text: string) => string; appearance?: string },
+  mode: PermissionMode,
   text: string,
 ): string {
   if (!text) return text;
-  if (!truecolorSupported()) {
-    try {
-      return theme.fg("success", text);
-    } catch {
-      return text;
-    }
+  const meta = MODE_META[mode];
+  if (truecolorSupported()) {
+    const appearance = theme.appearance === "light" ? "light" : "dark";
+    const { r, g, b } = modeRgb(mode, appearance);
+    return `\u001b[38;2;${r};${g};${b}m${text}\u001b[39m`;
   }
-  const { r, g, b } = ACCEPT_EDITS_RGB;
-  return `\u001b[38;2;${r};${g};${b}m${text}\u001b[39m`;
-}
-const AUTO_MODE_RGB = { r: 0xff, g: 0xc1, b: 0x07 };
-function formatAutoModeText(
-  theme: { fg: (color: string, text: string) => string },
-  text: string,
-): string {
-  if (!text) return text;
-  if (!truecolorSupported()) {
-    try {
-      return theme.fg("warning", text);
-    } catch {
-      return text;
-    }
+  try {
+    return theme.fg(meta.color, text);
+  } catch {
+    return text;
   }
-  const { r, g, b } = AUTO_MODE_RGB;
-  return `\u001b[38;2;${r};${g};${b}m${text}\u001b[39m`;
 }
 import {
   applyPermissionUpdate,
@@ -130,6 +121,7 @@ import {
 import { extractFirstBashPath } from "./pathExtractors.ts";
 import {
   MODE_META,
+  modeRgb,
   type AllowedPrompt,
   type ModesPersistedEntry,
   type PermissionMode,
@@ -1398,24 +1390,19 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
     };
     const formatModeLine = (
       mode: PermissionMode,
-    ): { text: string; color: string; hint: string; isAcceptEdits: boolean; isAuto: boolean } => {
+    ): { mode: PermissionMode; text: string; hint: string } => {
       const meta = MODE_META[mode];
       if (mode === "default") {
         return {
+          mode,
           text: meta.title,
-          color: meta.color,
           hint: " (shift+tab to cycle)",
-          isAcceptEdits: false,
-          isAuto: false,
         };
       }
-      const text = `${meta.symbol} ${meta.title.toLowerCase()} on`;
       return {
-        text,
-        color: meta.color,
+        mode,
+        text: `${meta.symbol} ${meta.title.toLowerCase()} on`,
         hint: " (shift+tab to cycle)",
-        isAcceptEdits: mode === "acceptEdits",
-        isAuto: mode === "auto",
       };
     };
     ctx.ui.setFooter((_tui: any, theme: any) => ({
@@ -1458,11 +1445,7 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
               " ".repeat(rightGap) +
               safeFg(theme, "dim", modelStr);
             const line2 =
-              (mode.isAcceptEdits
-                ? formatAcceptEditsText(theme, mode.text)
-                : mode.isAuto
-                  ? formatAutoModeText(theme, mode.text)
-                  : safeFg(theme, mode.color, mode.text)) +
+              formatModeText(theme, mode.mode, mode.text) +
               (showHint ? safeFg(theme, "dim", mode.hint) : "");
             return [line1, line2];
           }
@@ -1481,11 +1464,7 @@ export default function permissionModesExtension(pi: ExtensionAPI): void {
           " ".repeat(gap1) +
           safeFg(theme, "dim", ctxDisp);
         const line2 =
-          (mode.isAcceptEdits
-            ? formatAcceptEditsText(theme, mode.text)
-            : mode.isAuto
-              ? formatAutoModeText(theme, mode.text)
-              : safeFg(theme, mode.color, mode.text)) +
+          formatModeText(theme, mode.mode, mode.text) +
           " ".repeat(Math.max(1, width - modeFullW)) +
           safeFg(theme, "dim", modelStr);
         return [line1, line2];
