@@ -25,9 +25,7 @@ export function tryParseShellCommand(
         : shellQuoteParse(cmd, env)
     return { success: true, tokens }
   } catch (error) {
-    if (error instanceof Error) {
-      logError(error)
-    }
+    // Unsupported shell syntax is an expected conservative fallback, not an extension error.
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown parse error',
